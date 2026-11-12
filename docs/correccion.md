@@ -20,8 +20,7 @@ vacío y el paso de inducción añade un sismo al frente.
 Las operaciones de listas que usa el código cumplen estas ecuaciones:
 
 ```math
-\begin{aligned}
-\text{filter}(p, [\,]) &= [\,] \\
+\begin{aligned}\text{filter}(p, [\,]) &= [\,] \\
 \text{filter}(p, x :: xs) &= \begin{cases} x :: \text{filter}(p, xs) & \text{si } p(x) \\ \text{filter}(p, xs) & \text{si no} \end{cases} \\
 \text{map}(f, [\,]) &= [\,] \\
 \text{map}(f, x :: xs) &= f(x) :: \text{map}(f, xs) \\
@@ -492,3 +491,111 @@ $(0, 0.025]$, donde el redondeo fija el valor en a lo sumo $0.02$
 convencional ($c \ge 0.02$), la sucesión cruzará el umbral en un número finito de
 pasos $O(\log_{0.8}(c / \mu))$, asegurando que la evaluación perezosa se detiene
 siempre. $\blacksquare$
+
+## Punto 5: informe combinado
+
+### Especificación
+
+Se usa la notación de los puntos anteriores: $R(r)$ son las regiones que
+aparecen en $r$, $S(x, r)$ los sismos de la región $x$ en el orden del registro,
+$M(r) = \texttt{magnitudMaxima}(r)$, $C(r) = \texttt{conteoPorRegion}(r)$ y
+$RS(\mu, c)$ la lista de réplicas de una magnitud $\mu$ que superan
+estrictamente $c$ (Punto 4). Lo que describe el enunciado es el mapa $I(r, c)$
+de dominio $R(r)$ tal que, para cada $x \in R(r)$:
+
+```math
+I(r, c)(x) = \texttt{Resumen}\big(\,|S(x, r)|,\ M(r)(x),\ |RS(M(r)(x),\, c)|\,\big)
+```
+
+es decir: el número de sismos de la región, su magnitud máxima y el número de
+réplicas esperadas del sismo más fuerte.
+
+**Precondición.** $c \geq 0$. Para un mínimo negativo ninguna réplica lo
+alcanzaría nunca y `takeWhile` no terminaría (ver el Lema 5).
+
+### Lema 5: `replicasSensibles` termina
+
+El código final de `replicas` redondea solo al emitir: la sucesión interna es
+$a_k = \mu \cdot 0.8^k$, sin redondear, y la que se emite es
+$m_k = \rho(a_k)$ con $\rho(x) = \text{round}(100\,x)/100$.
+
+**Lema 5.** Para toda magnitud $\mu \geq 0$ y todo $c \geq 0$, existe $K$ tal que
+$m_K \leq c$. Por lo tanto `takeWhile(_ > c)` se detiene y
+`replicasSensibles(μ, c)` termina.
+
+*Demostración.* Como $0 < 0.8 < 1$, $a_k = \mu \cdot 0.8^k \to 0$. Entonces existe
+$K$ con $a_K < 0.005$, y para ese $K$ se tiene $\rho(a_K) = 0 \leq c$. Además,
+$\rho$ es monótona y $a_k$ es decreciente, así que $m_k$ es no creciente:
+$m_{k+1} \leq m_k$. Entonces la lista emitida es un prefijo de elementos
+$> c$ seguido de elementos $\leq c$, y `takeWhile` toma justo ese prefijo,
+que es finito, de longitud menor o igual que $K$. $\blacksquare$
+
+La demostración no usa un redondeo en cada paso: es lo que garantiza que el
+caso $c = 0$ termine.
+
+### Teorema 8: `informe`
+
+Vamos a demostrar que $\forall r,\ \forall c \geq 0 : \texttt{informe}(r, c) == I(r, c)$.
+
+*Demostración.* El código es
+
+```scala
+val maximas = magnitudMaxima(r)
+conteoPorRegion(r).map { case (region, n) =>
+  (region, Resumen(n, maximas(region), replicasSensibles(maximas(region), minimo).length))
+}
+```
+
+Lo hacemos en cuatro pasos.
+
+1. **Dominio.** Por el Teorema 5, `conteoPorRegion(r)` es el mapa de dominio
+   $R(r)$ con valor $|S(x, r)|$. El `map` recorre exactamente sus entradas
+   $(x, |S(x, r)|)$, una por cada $x \in R(r)$. Como las llaves son distintas,
+   el `map` no pierde ni mezcla ninguna entrada, así que el resultado tiene
+   dominio $R(r)$.
+2. **La consulta `maximas(region)` es segura.** Por el Teorema 6,
+   `magnitudMaxima(r)` tiene el mismo dominio $R(r)$. Como $x \in R(r)$,
+   `maximas(x)` está definido, no lanza `NoSuchElementException` y vale
+   $M(r)(x)$.
+3. **Los tres campos.** Para cada $x \in R(r)$, el primer campo es
+   $n = |S(x, r)|$ (paso 1), el segundo es $M(r)(x)$ (paso 2) y el tercero es
+   `replicasSensibles(M(r)(x), minimo).length`. Por el Lema 5 esa llamada
+   termina y, por el Teorema del §4.2, devuelve $RS(M(r)(x), c)$, así que su
+   longitud es $|RS(M(r)(x), c)|$.
+4. **Conclusión.** Cada llave $x \in R(r)$ tiene asociado
+   `Resumen`$(|S(x,r)|,\ M(r)(x),\ |RS(M(r)(x), c)|)$, que es $I(r, c)(x)$. $\blacksquare$
+
+### Propiedades
+
+* **Registro vacío:** $`R([\,]) = \emptyset`$, así que `informe(List(), c)` es
+  `Map()`.
+* **Las mismas regiones del registro:**
+  $\text{dom}(\texttt{informe}(r, c)) = R(r)$, igual que `conteoPorRegion`.
+* **Los conteos suman el largo del registro:** por el Lema 4,
+  $`\sum_{x \in R(r)} |S(x, r)| = |r|`$, es decir, la suma de los campos `sismos`
+  de todos los resúmenes es $|r|$.
+* **Las réplicas no crecen al subir el mínimo:** si $c \leq c'$, entonces
+  $RS(\mu, c')$ es un prefijo de $RS(\mu, c)$, porque $m_k > c' \Rightarrow m_k > c$.
+  Por eso la tercera componente no aumenta cuando aumenta el mínimo, mientras
+  que las dos primeras no dependen de él.
+* **Mínimo inalcanzable:** si $c \geq M(r)(x)$, entonces $m_1 \leq c$ y
+  $`RS(M(r)(x), c) = [\,]`$, con lo que el tercer campo es 0.
+
+### Independencia del orden de recorrido
+
+**Teorema 9.** Si $r'$ es un reordenamiento de $r$, entonces
+$\texttt{informe}(r', c) = \texttt{informe}(r, c)$.
+
+*Demostración.* Por el Teorema 7, $R(r') = R(r)$,
+$C(r') = C(r)$ y $M(r') = M(r)$. Por el Teorema 8, cada componente del
+`Resumen` de una región $x$ es función solo de $C(r)(x)$, de $M(r)(x)$ y
+de $c$, y esos tres valores son iguales para $r$ y $r'$. Los dos mapas tienen
+entonces el mismo dominio y el mismo valor en cada llave. $\blacksquare$
+
+### Comprobación con pruebas
+
+Las pruebas de `RegistroSismicoTestExtras` del Punto 5 verifican, sobre
+registros concretos, lo que se demostró aquí: `informe: tiene exactamente las
+regiones del registro`, `informe: la suma de los sismos es el largo del
+registro`, `informe: no depende del orden del registro` (Teorema 9) y
+`informe: con un mínimo inalcanzable todas las regiones tienen cero réplicas`.

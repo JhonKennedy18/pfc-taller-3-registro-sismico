@@ -486,3 +486,106 @@ Dado que $m_{k+1} \le 0.8\,m_k + 0.005 < m_k$ siempre que $m_k > 0.025$, la
 sucesión decrece estrictamente de manera geométrica. Para cualquier umbral
 mínimo convencional ($c \ge 0.02$), la sucesión cruza la cota en a lo sumo
 $O(\log_{0.8}(c / \mu))$ pasos, garantizando que `takeWhile` siempre termina.
+
+## Punto 5: informe combinado
+
+```scala
+def informe(r: Registro, minimo: Double): Map[String, Resumen] = {
+  val maximas = magnitudMaxima(r)
+
+  conteoPorRegion(r).map { case (region, n) =>
+    val maxima = maximas(region)
+    (region, Resumen(n, maxima, replicasSensibles(maxima, minimo).length))
+  }
+}
+```
+
+Este punto no usa `for`: combina las funciones de los Puntos 2 y 4. De
+`conteoPorRegion` toma las regiones y su número de sismos; de `magnitudMaxima`,
+la mayor magnitud de cada región; y de `replicasSensibles`, cuántas réplicas
+supera el mínimo el sismo más fuerte de esa región. Con esos tres datos arma un
+`Resumen` por región.
+
+### Cómo se ejecuta
+
+1. `val maximas = magnitudMaxima(r)` se calcula **una sola vez**, antes de
+   recorrer nada, y se reutiliza para todas las regiones.
+2. `conteoPorRegion(r)` da el mapa `región -> número de sismos`. El `map` con
+   `case (region, n)` recorre sus entradas y reemplaza cada una por
+   `(region, Resumen(...))`; las llaves se conservan.
+3. Para cada entrada se busca la máxima con `maximas(region)`. Es una consulta
+   directa y no lanza excepción, porque `conteoPorRegion` y `magnitudMaxima`
+   tienen las mismas llaves: ambas salen de `porRegion`.
+4. `replicasSensibles(maxima, minimo)` genera las réplicas del sismo más fuerte
+   mientras superen estrictamente el mínimo, y `.length` cuenta cuántas son. La
+   primera de la secuencia es la magnitud del propio sismo, así que se cuenta
+   si supera el mínimo.
+5. Con `n`, `maxima` y ese conteo se construye
+   `Resumen(n, maxima, réplicas)`.
+
+### Ejecución de `informe(registro, 3.0)`
+
+Los datos que llegan de los Puntos 2 y 4:
+
+| Región | `conteoPorRegion` | `magnitudMaxima` | Réplicas de la máxima que superan 3.0 | `.length` |
+|--------|:-----------------:|:----------------:|----------------------------------------|:---------:|
+| Valle     | 3 | 5.3 | `5.3, 4.24, 3.39` (la siguiente, 2.71, no supera 3.0) | 3 |
+| Santander | 2 | 5.1 | `5.1, 4.08, 3.26` (la siguiente, 2.61, no supera 3.0) | 3 |
+| Choco     | 2 | 6.0 | `6.0, 4.8, 3.84, 3.07` (la siguiente, 2.46, no supera 3.0) | 4 |
+
+Cada fila se convierte en una entrada del resultado:
+
+| Entrada de `conteoPorRegion` | `maximas(region)` | Entrada resultante |
+|------------------------------|:-----------------:|--------------------|
+| `Valle -> 3`     | 5.3 | `Valle -> Resumen(3, 5.3, 3)` |
+| `Santander -> 2` | 5.1 | `Santander -> Resumen(2, 5.1, 3)` |
+| `Choco -> 2`     | 6.0 | `Choco -> Resumen(2, 6.0, 4)` |
+
+Resultado:
+
+```scala
+Map("Valle"     -> Resumen(3, 5.3, 3),
+    "Santander" -> Resumen(2, 5.1, 3),
+    "Choco"     -> Resumen(2, 6.0, 4))
+```
+
+### Ejecución de `informe(registro, 5.0)`
+
+Con un mínimo más alto, las réplicas se cortan antes. Para el Valle, la
+secuencia es `5.3, 4.24, ...`: solo `5.3` supera 5.0, y `takeWhile` se detiene
+en `4.24`. Lo mismo pasa en Santander (`5.1` y luego `4.08`) y en Choco (`6.0`
+y luego `4.8`). El resultado es
+
+```scala
+Map("Valle"     -> Resumen(3, 5.3, 1),
+    "Santander" -> Resumen(2, 5.1, 1),
+    "Choco"     -> Resumen(2, 6.0, 1))
+```
+
+Los dos primeros campos no cambian, porque no dependen del mínimo. Solo cambia
+el último.
+
+### Casos límite
+
+* **Registro vacío:** `conteoPorRegion(List())` es `Map()`, así que el `map` no
+  recorre ninguna entrada y el resultado es `Map()`.
+* **Región cuya máxima no supera el mínimo:** `takeWhile` se detiene en el
+  primer elemento, `replicasSensibles` devuelve `List()` y el último campo es
+  `0`. Por ejemplo, Huila con un solo sismo de 2.9 y mínimo 3.0 da
+  `Resumen(1, 2.9, 0)`.
+* **Mínimo cero:** la secuencia termina de todos modos, porque el redondeo a dos
+  decimales eventualmente emite `0.0`, que no supera 0. Con la máxima 5.3 salen
+  32 réplicas.
+
+### Diagrama
+
+```mermaid
+flowchart TB
+    R["registro: 7 sismos"] --> C["conteoPorRegion: Valle 3, Santander 2, Choco 2"]
+    R --> X["magnitudMaxima: Valle 5.3, Santander 5.1, Choco 6.0"]
+    X --> RS["replicasSensibles de cada maxima con minimo 3.0: 3, 3, 4"]
+    C --> M["map sobre las entradas de conteoPorRegion"]
+    X --> M
+    RS --> M
+    M --> OUT["Valle Resumen 3, 5.3, 3 | Santander Resumen 2, 5.1, 3 | Choco Resumen 2, 6.0, 4"]
+```

@@ -30,12 +30,14 @@ class RegistroSismico {
   def paresCercanos(r: Registro, dif: Double): List[(String, String)] = {
     val regiones = (for (s <- r) yield s.region).distinct
 
+    val tolerancia = 1e-9
+
     def cercanas(a: String, b: String): Boolean =
       (for {
         s1 <- r
         s2 <- r
         if s1.region == a && s2.region == b
-        if Math.abs(s1.magnitud - s2.magnitud) <= dif
+        if Math.abs(s1.magnitud - s2.magnitud) <= dif + tolerancia
       } yield (s1, s2)).nonEmpty
 
     for {
@@ -76,20 +78,30 @@ class RegistroSismico {
 
   // Punto 4: réplicas perezosas -------------------------------------------------
 
-  def redondear(x: Double): Double = Math.round(x * 100.0) / 100.0
-
-  /** La secuencia infinita que empieza en la magnitud y multiplica por 0.8. */
   def replicas(magnitud: Double): LazyList[Double] = {
-    val m = redondear(magnitud)
-    m #:: replicas(m * 0.8)
+    def redondear(x: Double): Double = Math.round(x * 100.0) / 100.0
+
+    def desde(actual: Double): LazyList[Double] =
+      redondear(actual) #:: desde(actual * 0.8)
+
+    desde(magnitud)
+
   }
 
   /** Las réplicas mientras superen el mínimo, incluida la primera. */
   def replicasSensibles(magnitud: Double, minimo: Double): List[Double] =
     replicas(magnitud).takeWhile(_ > minimo).toList
 
+
   // Punto 5: informe combinado --------------------------------------------------
 
   /** Conteo, magnitud máxima y réplicas esperadas del sismo más fuerte, por región. */
-  def informe(r: Registro, minimo: Double): Map[String, Resumen] = ???
+  def informe(r: Registro, minimo: Double): Map[String, Resumen] = {
+    val maximas = magnitudMaxima(r)
+
+    conteoPorRegion(r).map { case (region, n) =>
+      val maxima = maximas(region)
+      (region, Resumen(n, maxima, replicasSensibles(maxima, minimo).length))
+    }
+  }
 }
