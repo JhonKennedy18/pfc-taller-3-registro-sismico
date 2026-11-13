@@ -226,11 +226,11 @@ Con $L(r) = \text{map}(g, \text{filter}(p, r))$ como en el Lema 1:
 \text{veces}_v(L(r)) = \sum_{s \in r} [\,p(s) \land g(s) = v\,]
 ```
 
-*Demostración.* Por inducción sobre $r$. Para $r = [\,]$, $L(r) = [\,]$ y la suma
+*Demostración.* Por inducción sobre $r$. Para $`r = [\,]`$, $`L(r) = [\,]`$ y la suma
 vacía vale 0. Para $r = s :: r'$, por el Lema 1, $L(s :: r')$ es $g(s) :: L(r')$
 si $p(s)$ y $L(r')$ si no. En el primer caso $v$ aparece una vez más exactamente
 cuando $g(s) = v$, y en el segundo caso no se añade nada; en ambos, el aporte de
-$s$ es $[\,p(s) \land g(s) = v\,]$, y el resto es $\text{veces}_v(L(r'))$, que por
+$s$ es $`[\,p(s) \land g(s) = v\,]`$, y el resto es $\text{veces}_v(L(r'))$, que por
 la HI es la suma sobre $r'$. $\blacksquare$
 
 #### Teorema 3b: `fuertes` y `enRegion`
@@ -256,7 +256,7 @@ región o cada magnitud, incluidos los repetidos.
 
 #### Teorema 3c: `paresCercanos`
 
-Sea $U(r, d) = \big\{\, \{a, b\} \mid a, b \in R(r),\ a \neq b,\ C(a, b, r, d) \,\big\}$
+Sea $`U(r, d) = \big\{\, \{a, b\} \mid a, b \in R(r),\ a \neq b,\ C(a, b, r, d) \,\big\}`$
 el conjunto de parejas **no ordenadas** de regiones cercanas. Entonces:
 
 1. $C(a, b, r', d) \iff C(a, b, r, d)$ y $C(a, b, r, d) \iff C(b, a, r, d)$.
@@ -278,7 +278,7 @@ el conjunto de parejas **no ordenadas** de regiones cercanas. Entonces:
   definen $U$ coinciden para $r$ y para $r'$.
 * **(3)** Por el Teorema 3, $\texttt{paresCercanos}(r, d) = P(r, d)$, donde cada
   pareja $(a_i, a_j)$ con $i < j$ corresponde a una sola pareja no ordenada
-  $\{a_i, a_j\}$ y las $a_i$ son distintas, así que cada pareja no ordenada de
+  $`\{a_i, a_j\}`$ y las $a_i$ son distintas, así que cada pareja no ordenada de
   $U(r, d)$ sale exactamente una vez, en una de sus dos orientaciones. Lo mismo
   vale para $r'$, y por (2) las parejas no ordenadas son las mismas. $\blacksquare$
 
@@ -418,7 +418,7 @@ Por el Teorema 5, el mapa subyacente es $C(r)$. Por especificación del método
 `withDefaultValue`, ante una clave $k \in \text{dom}(C(r))$ se retorna $C(r)(k)$, y ante
 cualquier clave $k \notin \text{dom}(C(r))$ se devuelve el valor por defecto $0$,
 sin lanzar `NoSuchElementException`. Esto coincide exactamente con la definición por
-casos de $CS(r)$. Si $r = [\,]$, el dominio es vacío y cualquier consulta devuelve $0$. $\blacksquare$
+casos de $CS(r)$. Si $`r = [\,]`$, el dominio es vacío y cualquier consulta devuelve $0$. $\blacksquare$
 
 ### 3.2 `maximaDe`
 
@@ -448,20 +448,20 @@ insegura ni lance excepción. $\blacksquare$
 
 **Especificación.**
 
-$$
+```math
 RA(r) =
 \begin{cases}
 \text{Some}\bigl(\max\nolimits_{\preceq} \text{dom}(C(r))\bigr) & \text{si } r \neq [\,] \\
 \text{None} & \text{si } r = [\,]
 \end{cases}
-$$
+```
 
 donde $\preceq$ es el orden total lexicográfico que compara primero por conteo
 descendente y desempata por orden alfabético ascendente:
 
-$$
+```math
 a \preceq b \iff C(r)(a) > C(r)(b) \;\lor\; \bigl(C(r)(a) = C(r)(b) \land a \le_{\text{alf}} b\bigr)
-$$
+```
 
 **Teorema.** $\text{regionMasActiva}(r) = RA(r)$.
 
@@ -476,16 +476,16 @@ satisface:
 
 Como la relación $\preceq$ inducida por esta tupla es un orden total estricto y el
 ordenamiento es estable, el primer elemento es único y corresponde a
-$\max_{\preceq} \text{dom}(C(r))$. Si $r = [\,]$, la lista de tuplas es vacía y
+$\max_{\preceq} \text{dom}(C(r))$. Si $`r = [\,]`$, la lista de tuplas es vacía y
 `headOption` retorna `None`. $\blacksquare$
 
 **Independencia del orden de recorrido.**
 El resultado de $\text{regionMasActiva}(r)$ no depende del orden en que aparezcan
 los sismos en $r$:
 
-$$
+```math
 \forall \pi.\; RA(\pi(r)) = RA(r)
-$$
+```
 
 Esto se debe a que $C(\pi(r)) = C(r)$ (Teorema 7) y el criterio de selección y
 desempate $\preceq$ opera exclusivamente sobre el par $(\text{conteo}, \text{nombre de región})$,
@@ -507,7 +507,7 @@ def replicas(magnitud: Double): LazyList[Double] = {
 ```
 
 **Especificación.** Sean $a_1 = \mu$ y $a_{k+1} = 0.8 \cdot a_k$ (producto en
-`Double`) la sucesión interna, sin redondear, y $\rho(x) = \text{round}(100\,x)/100$.
+`Double`) la sucesión interna, sin redondear, y $`\rho(x) = \text{round}(100\,x)/100`$.
 La secuencia emitida es
 
 $$
@@ -554,9 +554,9 @@ al tamaño infinito de la secuencia conceptual.
 estrictamente el umbral mínimo $c$, incluyendo la primera magnitud cuando esta lo
 supera:
 
-$$
+```math
 RS(\mu, c) = [m_1, \ldots, m_k], \quad k = \max \{ j \ge 0 \mid \forall i \in \{1, \ldots, j\}, m_i > c \}
-$$
+```
 
 #### Lema 5: `replicasSensibles` termina
 
@@ -587,7 +587,7 @@ tal que $p(m_{k+1})$ sea falso ($m_{k+1} \le c$). Por el Lema 5 ese índice
 existe, y al detenerse no se fuerza ningún elemento subsiguiente. Luego, `toList`
 convierte el prefijo $[m_1, \ldots, m_k]$ en una `List` finita. Como $m_k$ es no
 creciente, ese prefijo es exactamente $RS(\mu, c)$. Si $m_1 \le c$, la primera
-condición falla y retorna $[\,]$. $\blacksquare$
+condición falla y retorna $`[\,]`$. $\blacksquare$
 
 ## Punto 5: informe combinado
 
