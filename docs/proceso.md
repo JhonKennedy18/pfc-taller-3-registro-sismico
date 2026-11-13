@@ -1,10 +1,11 @@
 # Informe de proceso
 
-Este informe explica cómo se ejecuta cada función de los Puntos 1 y 2 sobre el
+Este informe explica cómo se ejecuta cada función de los Puntos 1 a 5 sobre el
 registro de ejemplo del enunciado, y en qué operaciones se traduce cada
-expresión `for`. Las traducciones se obtuvieron del compilador
-(`scalac -Xprint:parser`) y las trazas salen de ejecutar el código, no de
-cálculos a mano.
+expresión `for`. Las traducciones siguen las reglas de reescritura del
+compilador de Scala. Los valores de las trazas no son cuentas a mano: se
+recalcularon con una reimplementación independiente de las mismas funciones
+(en Python, con la semántica de `Math.round` de Scala).
 
 ## Registro de ejemplo
 
@@ -39,15 +40,14 @@ La regla general es: el **último** generador se traduce a `map`, cada generador
 no construye una lista intermedia: deja pasar cada elemento solo si cumple la
 condición, y el `map` que sigue transforma únicamente los que pasaron.
 
-Las expresiones `for` que usa el código, con la traducción exacta que imprime
-el compilador:
+Las expresiones `for` que usa el código y su traducción:
 
 | Función | Expresión `for` | Traducción |
 |---------|-----------------|------------|
 | `fuertes` | `for { s <- r; if s.magnitud > umbral } yield s.region` | `r.withFilter(s => s.magnitud > umbral).map(s => s.region)` |
 | `enRegion` | `for { s <- r; if s.region == region } yield s.magnitud` | `r.withFilter(s => s.region == region).map(s => s.magnitud)` |
 | `paresCercanos` (regiones) | `for (s <- r) yield s.region` | `r.map(s => s.region)` |
-| `paresCercanos` (`cercanas`) | `for { s1 <- r; s2 <- r; if ...; if ... } yield (s1, s2)` | `r.flatMap(s1 => r.withFilter(s2 => s1.region == a && s2.region == b).withFilter(s2 => Math.abs(s1.magnitud - s2.magnitud) <= dif).map(s2 => (s1, s2)))` |
+| `paresCercanos` (`cercanas`) | `for { s1 <- r; s2 <- r; if ...; if ... } yield (s1, s2)` | `r.flatMap(s1 => r.withFilter(s2 => s1.region == a && s2.region == b).withFilter(s2 => Math.abs(s1.magnitud - s2.magnitud) <= dif + tolerancia).map(s2 => (s1, s2)))` |
 | `paresCercanos` (resultado) | `for { a <- regiones; b <- regiones; if ...; if ... } yield (a, b)` | `regiones.flatMap(a => regiones.withFilter(b => regiones.indexOf(a) < regiones.indexOf(b)).withFilter(b => cercanas(a, b)).map(b => (a, b)))` |
 
 ## Punto 1: consultas con expresiones `for`
@@ -125,12 +125,14 @@ Resultado: `List(4.2, 3.8, 5.3)`.
 def paresCercanos(r: Registro, dif: Double): List[(String, String)] = {
   val regiones = (for (s <- r) yield s.region).distinct
 
+  val tolerancia = 1e-9
+
   def cercanas(a: String, b: String): Boolean =
     (for {
       s1 <- r
       s2 <- r
       if s1.region == a && s2.region == b
-      if Math.abs(s1.magnitud - s2.magnitud) <= dif
+      if Math.abs(s1.magnitud - s2.magnitud) <= dif + tolerancia
     } yield (s1, s2)).nonEmpty
 
   for {
@@ -142,7 +144,8 @@ def paresCercanos(r: Registro, dif: Double): List[(String, String)] = {
 }
 ```
 
-La función trabaja en tres pasos.
+La función trabaja en tres pasos. Antes, `tolerancia` fija la constante
+$10^{-9}$, que se explica en el Paso 2.
 
 **Paso 1: las regiones en orden de aparición.** `(for (s <- r) yield s.region)`
 se traduce a `r.map(s => s.region)`, que da una región por cada sismo, y
@@ -156,6 +159,14 @@ sismos. Cada combinación `(s1, s2)` de sismos del registro se examina en ese
 orden. La función devuelve `true` si queda al menos una pareja (`.nonEmpty`),
 es decir, si existe algún sismo de `a` y algún sismo de `b` cuyas magnitudes
 difieren a lo sumo `dif`.
+
+La comparación es `<= dif + tolerancia` y no `<= dif` por la aritmética de
+`Double`: `3.1 - 3.0` da `0.10000000000000009`, de modo que con `dif = 0.1` la
+comparación exacta rechazaría una pareja que, en decimales, difiere
+exactamente `0.1`. La tolerancia $10^{-9}$ absorbe ese error de representación.
+El costo es una decisión de diseño: dos magnitudes cuya diferencia real esté en
+$(dif,\ dif + 10^{-9}]$ también se consideran cercanas, algo que no ocurre con
+magnitudes de uno o dos decimales como las del registro.
 
 **Paso 3: las parejas de regiones.** El `for` externo recorre todas las
 combinaciones `(a, b)` de regiones. La primera guarda,
@@ -199,7 +210,9 @@ un sismo del Valle con uno de Santander:
 
 Cinco parejas cumplen, así que la lista no queda vacía y `cercanas` devuelve
 `true`. Las diferencias son aproximadas: con `Double`, la resta `5.1 - 4.2` da
-`0.8999999999999995` y no exactamente `0.9`.
+`0.8999999999999995` y no exactamente `0.9`. Con `dif = 1.0` el resultado es el
+mismo con y sin tolerancia, porque ninguna diferencia cae en el intervalo
+$(1.0,\ 1.0 + 10^{-9}]$.
 
 Resultado: `List(("Valle", "Santander"), ("Valle", "Choco"), ("Santander", "Choco"))`.
 
@@ -362,8 +375,9 @@ def regionMasActiva(r: Registro): Option[String] =
 **Cómo se ejecuta.** Paso a paso:
 
 1. `conteoPorRegion(r).toList` convierte el mapa en la lista de parejas
-   `(región, conteo)`. Para el registro de ejemplo:
-   `List(("Valle", 3), ("Santander", 2), ("Choco", 2))`.
+   `(región, conteo)`, en un orden que el mapa no garantiza y que aquí no
+   importa, porque el paso siguiente ordena. Para el registro de ejemplo,
+   por ejemplo: `List(("Valle", 3), ("Santander", 2), ("Choco", 2))`.
 2. `sortBy { case (region, n) => (-n, region) }` ordena lexicográficamente por
    la tupla: primero por conteo **descendente** (el signo menos invierte el orden
    numérico natural) y, ante empates en el conteo, por la cadena de la `region` en
@@ -384,7 +398,7 @@ Con `List(Sismo(..., "Zulia", ...), Sismo(..., "Arauca", ...))`:
 
 ```mermaid
 flowchart LR
-    R["conteoPorRegion(r)"] --> L["toList: [(Valle,3), (Santander,2), (Choco,2)]"]
+    R["conteoPorRegion(r)"] --> L["toList: por ejemplo [(Valle,3), (Santander,2), (Choco,2)]"]
     L --> S["sortBy (-n, region): [(Valle,3), (Choco,2), (Santander,2)]"]
     S --> H["headOption: Some((Valle, 3))"]
     H --> M["map(_._1): Some('Valle')"]
@@ -395,50 +409,65 @@ flowchart LR
 ### 4.1 `replicas`: una secuencia infinita
 
 ```scala
+def redondear(x: Double): Double = Math.round(x * 100.0) / 100.0
+
 def replicas(magnitud: Double): LazyList[Double] = {
-  val m = redondear(magnitud)
-  m #:: replicas(m * 0.8)
+  def desde(actual: Double): LazyList[Double] =
+    redondear(actual) #:: desde(actual * 0.8)
+
+  desde(magnitud)
 }
 ```
 
-**Cómo se ejecuta.** El operador `#::` construye una `LazyList` cuya
-**cabeza es el valor evaluado `m`** y cuya **cola es una expresión por nombre**:
-`replicas(m * 0.8)` no se evalúa al invocar la función, sino únicamente cuando un
-consumidor solicita la cola de la lista. Cada elemento sucesivo se define como:
+**Cómo se ejecuta.** `replicas` solo llama a la auxiliar interna `desde` con la
+magnitud inicial. `desde(actual)` construye con `#::` una `LazyList` cuya
+**cabeza** es `redondear(actual)`, evaluada de inmediato, y cuya **cola** es la
+expresión por nombre `desde(actual * 0.8)`: no se evalúa al invocar la función,
+sino únicamente cuando un consumidor solicita la cola.
+
+El redondeo se aplica **solo al emitir**: el valor interno `actual` se multiplica
+por 0.8 sin redondear, y lo que sale de la lista es su redondeo. Si se redondeara
+también el valor interno, el error se acumularía (con 3.0 la posición 7 daría
+0.78 en lugar de 0.79) y, con mínimo 0, la secuencia se estancaría en 0.01 y
+nunca terminaría. Con $a_1 = \mu$ y $a_{k+1} = 0.8 \cdot a_k$ (producto en
+`Double`), la secuencia emitida es:
 
 $$
-m_1 = \text{redondear}(\mu), \qquad m_{k+1} = \text{redondear}(0.8 \cdot m_k)
+m_k = \rho(a_k), \qquad \rho(x) = \frac{\text{round}(100\,x)}{100}
 $$
 
 **Por qué no agota la memoria aunque sea infinita.**
 La función no ejecuta un ciclo infinito ni reserva memoria para toda la
-secuencia; retorna de inmediato en tiempo $O(1)$ una celda que contiene el primer
-valor y una clausura (receta de cómputo) para la cola. Solo se materializan y
-almacenan en memoria los nodos que han sido explícitamente consultados (por
-ejemplo mediante `take(n)`), los cuales quedan memorizados (*memoized*) para no
-recalcularlos. La llamada `replicas(5.0).take(4)` retorna inmediatamente cuatro
-elementos sin bloquearse jamás.
+secuencia: retorna de inmediato, en tiempo $O(1)$, una celda que contiene el
+primer valor y una clausura (receta de cómputo) para la cola. Solo se
+materializan y almacenan los nodos que un consumidor ha pedido explícitamente
+(por ejemplo con `take(n)`), y quedan memorizados (*memoized*) para no
+recalcularlos. La llamada `replicas(5.0).take(4)` retorna cuatro elementos sin
+bloquearse jamás.
 
-**Traza de `replicas(5.0).take(4).toList`:**
+**Traza de `replicas(5.0).take(4).toList`.** Los valores internos son
+$a_1 = 5.0$, $a_2 = 4.0$, $a_3 = 3.2$, $a_4 = 2.5600000000000005$ y
+$a_5 = 2.0480000000000005$:
 
 | paso | consumidor solicita | cabeza evaluada | cola suspendida (receta) |
 |:---:|---|:---:|---|
-| 0 | `replicas(5.0)` | $5.0$ | `replicas(4.0)` |
-| 1 | cola de paso 0 | $4.0$ | `replicas(3.2)` |
-| 2 | cola de paso 1 | $3.2$ | `replicas(2.56)` |
-| 3 | cola de paso 2 | $2.56$ | `replicas(2.05)` |
-| — | `take(4)` completó 4 elementos | se detiene | nunca se evalúa `replicas(2.05)` |
+| 0 | `replicas(5.0)` | $\rho(a_1) = 5.0$ | `desde(a_1 * 0.8)`, con $a_2 = 4.0$ |
+| 1 | cola de paso 0 | $\rho(a_2) = 4.0$ | `desde(a_2 * 0.8)`, con $a_3 = 3.2$ |
+| 2 | cola de paso 1 | $\rho(a_3) = 3.2$ | `desde(a_3 * 0.8)`, con $a_4 = 2.5600000000000005$ |
+| 3 | cola de paso 2 | $\rho(a_4) = 2.56$ | `desde(a_4 * 0.8)`, con $a_5 = 2.0480000000000005$ |
+| — | `take(4)` completó 4 elementos | se detiene | nunca se evalúa `desde(a_4 * 0.8)` |
 
 Resultado: `List(5.0, 4.0, 3.2, 2.56)`. En memoria únicamente se construyeron
-cuatro celdas; la cola del paso 3 quedó suspendida sin evaluar.
+cuatro celdas; la cola del paso 3 quedó suspendida sin evaluar. Si se evaluara,
+su cabeza sería $\rho(a_5) = 2.05$.
 
 ```mermaid
 sequenceDiagram
     participant T as take(4)
-    participant L0 as replicas(5.0)
-    participant L1 as replicas(4.0)
-    participant L2 as replicas(3.2)
-    participant L3 as replicas(2.56)
+    participant L0 as desde(5.0)
+    participant L1 as desde(4.0)
+    participant L2 as desde(3.2)
+    participant L3 as desde(2.56)
     T->>L0: pide la cabeza
     L0-->>T: 5.0 (calcula redondear(5.0))
     T->>L0: pide la cola
@@ -471,10 +500,10 @@ ansiosa.
 
 | elemento | cálculo | valor | ¿supera 3.0? | decisión de `takeWhile` |
 |:---:|:---:|:---:|:---:|---|
-| 1 | $\text{redondear}(5.0)$ | $5.0$ | sí ($5.0 > 3.0$) | se acepta y se pide siguiente |
-| 2 | $\text{redondear}(5.0 \times 0.8)$ | $4.0$ | sí ($4.0 > 3.0$) | se acepta y se pide siguiente |
-| 3 | $\text{redondear}(4.0 \times 0.8)$ | $3.2$ | sí ($3.2 > 3.0$) | se acepta y se pide siguiente |
-| 4 | $\text{redondear}(3.2 \times 0.8)$ | $2.56$ | no ($2.56 \not> 3.0$) | **`takeWhile` se detiene** |
+| 1 | $\rho(a_1)$ con $a_1 = 5.0$ | $5.0$ | sí ($5.0 > 3.0$) | se acepta y se pide siguiente |
+| 2 | $\rho(a_2)$ con $a_2 = 5.0 \times 0.8$ | $4.0$ | sí ($4.0 > 3.0$) | se acepta y se pide siguiente |
+| 3 | $\rho(a_3)$ con $a_3 = 4.0 \times 0.8$ | $3.2$ | sí ($3.2 > 3.0$) | se acepta y se pide siguiente |
+| 4 | $\rho(a_4)$ con $a_4 = 3.2 \times 0.8$ | $2.56$ | no ($2.56 \not> 3.0$) | **`takeWhile` se detiene** |
 
 Resultado: `List(5.0, 4.0, 3.2)`.
 El cuarto elemento ($2.56$) se tuvo que evaluar para verificar el predicado, pero
@@ -482,10 +511,14 @@ al no cumplirlo, la evaluación se corta inmediatamente y ningún elemento
 posterior (como $2.05$) llega a ser computado.
 
 **Garantía de terminación.**
-Dado que $m_{k+1} \le 0.8\,m_k + 0.005 < m_k$ siempre que $m_k > 0.025$, la
-sucesión decrece estrictamente de manera geométrica. Para cualquier umbral
-mínimo convencional ($c \ge 0.02$), la sucesión cruza la cota en a lo sumo
-$O(\log_{0.8}(c / \mu))$ pasos, garantizando que `takeWhile` siempre termina.
+Con $a_{k+1} = 0.8 \cdot a_k$ y $\mu \ge 0$, los $a_k$ son no negativos y
+decrecen hacia 0. Cuando $a_K < 0.005$, el redondeo da $\rho(a_K) = 0$. Como el
+redondeo no se acumula, esto ocurre para todo $\mu \ge 0$ y, por tanto, la
+emisión llega a 0 en un número finito de pasos. Para cualquier mínimo
+$c \ge 0$, la secuencia emitida alcanza un valor $\le c$ y `takeWhile` se
+detiene (el detalle está en el Lema 5 del informe de corrección). Si
+$\mu < 0$, la primera réplica ya es $\le 0 \le c$ y el resultado es la lista
+vacía.
 
 ## Punto 5: informe combinado
 
@@ -573,9 +606,10 @@ el último.
   primer elemento, `replicasSensibles` devuelve `List()` y el último campo es
   `0`. Por ejemplo, Huila con un solo sismo de 2.9 y mínimo 3.0 da
   `Resumen(1, 2.9, 0)`.
-* **Mínimo cero:** la secuencia termina de todos modos, porque el redondeo a dos
-  decimales eventualmente emite `0.0`, que no supera 0. Con la máxima 5.3 salen
-  32 réplicas.
+* **Mínimo cero:** la secuencia termina de todos modos, porque el valor interno
+  sin redondear tiende a 0 y el redondeo a dos decimales eventualmente emite
+  `0.0`, que no supera 0. Con la máxima 5.3 salen 32 réplicas, la última de
+  `0.01`.
 
 ### Diagrama
 

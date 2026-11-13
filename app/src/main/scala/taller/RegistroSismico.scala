@@ -78,14 +78,14 @@ class RegistroSismico {
 
   // Punto 4: réplicas perezosas -------------------------------------------------
 
-  def replicas(magnitud: Double): LazyList[Double] = {
-    def redondear(x: Double): Double = Math.round(x * 100.0) / 100.0
+  def redondear(x: Double): Double = Math.round(x * 100.0) / 100.0
 
+  /** La secuencia infinita que empieza en la magnitud y multiplica por 0.8. */
+  def replicas(magnitud: Double): LazyList[Double] = {
     def desde(actual: Double): LazyList[Double] =
       redondear(actual) #:: desde(actual * 0.8)
 
     desde(magnitud)
-
   }
 
   /** Las réplicas mientras superen el mínimo, incluida la primera. */
