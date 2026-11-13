@@ -1,10 +1,11 @@
 # Informe de proceso
 
-Este informe explica cómo se ejecuta cada función de los Puntos 1 y 2 sobre el
+Este informe explica cómo se ejecuta cada función de los Puntos 1 a 5 sobre el
 registro de ejemplo del enunciado, y en qué operaciones se traduce cada
-expresión `for`. Las traducciones se obtuvieron del compilador
-(`scalac -Xprint:parser`) y las trazas salen de ejecutar el código, no de
-cálculos a mano.
+expresión `for`. Las traducciones siguen las reglas de reescritura del
+compilador de Scala. Los valores de las trazas no son cuentas a mano: se
+recalcularon con una reimplementación independiente de las mismas funciones
+(en Python, con la semántica de `Math.round` de Scala).
 
 ## Registro de ejemplo
 
@@ -39,15 +40,14 @@ La regla general es: el **último** generador se traduce a `map`, cada generador
 no construye una lista intermedia: deja pasar cada elemento solo si cumple la
 condición, y el `map` que sigue transforma únicamente los que pasaron.
 
-Las expresiones `for` que usa el código, con la traducción exacta que imprime
-el compilador:
+Las expresiones `for` que usa el código y su traducción:
 
 | Función | Expresión `for` | Traducción |
 |---------|-----------------|------------|
 | `fuertes` | `for { s <- r; if s.magnitud > umbral } yield s.region` | `r.withFilter(s => s.magnitud > umbral).map(s => s.region)` |
 | `enRegion` | `for { s <- r; if s.region == region } yield s.magnitud` | `r.withFilter(s => s.region == region).map(s => s.magnitud)` |
 | `paresCercanos` (regiones) | `for (s <- r) yield s.region` | `r.map(s => s.region)` |
-| `paresCercanos` (`cercanas`) | `for { s1 <- r; s2 <- r; if ...; if ... } yield (s1, s2)` | `r.flatMap(s1 => r.withFilter(s2 => s1.region == a && s2.region == b).withFilter(s2 => Math.abs(s1.magnitud - s2.magnitud) <= dif).map(s2 => (s1, s2)))` |
+| `paresCercanos` (`cercanas`) | `for { s1 <- r; s2 <- r; if ...; if ... } yield (s1, s2)` | `r.flatMap(s1 => r.withFilter(s2 => s1.region == a && s2.region == b).withFilter(s2 => Math.abs(s1.magnitud - s2.magnitud) <= dif + tolerancia).map(s2 => (s1, s2)))` |
 | `paresCercanos` (resultado) | `for { a <- regiones; b <- regiones; if ...; if ... } yield (a, b)` | `regiones.flatMap(a => regiones.withFilter(b => regiones.indexOf(a) < regiones.indexOf(b)).withFilter(b => cercanas(a, b)).map(b => (a, b)))` |
 
 ## Punto 1: consultas con expresiones `for`
@@ -125,12 +125,14 @@ Resultado: `List(4.2, 3.8, 5.3)`.
 def paresCercanos(r: Registro, dif: Double): List[(String, String)] = {
   val regiones = (for (s <- r) yield s.region).distinct
 
+  val tolerancia = 1e-9
+
   def cercanas(a: String, b: String): Boolean =
     (for {
       s1 <- r
       s2 <- r
       if s1.region == a && s2.region == b
-      if Math.abs(s1.magnitud - s2.magnitud) <= dif
+      if Math.abs(s1.magnitud - s2.magnitud) <= dif + tolerancia
     } yield (s1, s2)).nonEmpty
 
   for {
@@ -142,7 +144,8 @@ def paresCercanos(r: Registro, dif: Double): List[(String, String)] = {
 }
 ```
 
-La función trabaja en tres pasos.
+La función trabaja en tres pasos. Antes, `tolerancia` fija la constante
+$10^{-9}$, que se explica en el Paso 2.
 
 **Paso 1: las regiones en orden de aparición.** `(for (s <- r) yield s.region)`
 se traduce a `r.map(s => s.region)`, que da una región por cada sismo, y
@@ -156,6 +159,14 @@ sismos. Cada combinación `(s1, s2)` de sismos del registro se examina en ese
 orden. La función devuelve `true` si queda al menos una pareja (`.nonEmpty`),
 es decir, si existe algún sismo de `a` y algún sismo de `b` cuyas magnitudes
 difieren a lo sumo `dif`.
+
+La comparación es `<= dif + tolerancia` y no `<= dif` por la aritmética de
+`Double`: `3.1 - 3.0` da `0.10000000000000009`, de modo que con `dif = 0.1` la
+comparación exacta rechazaría una pareja que, en decimales, difiere
+exactamente `0.1`. La tolerancia $10^{-9}$ absorbe ese error de representación.
+El costo es una decisión de diseño: dos magnitudes cuya diferencia real esté en
+$(dif,\ dif + 10^{-9}]$ también se consideran cercanas, algo que no ocurre con
+magnitudes de uno o dos decimales como las del registro.
 
 **Paso 3: las parejas de regiones.** El `for` externo recorre todas las
 combinaciones `(a, b)` de regiones. La primera guarda,
@@ -199,7 +210,9 @@ un sismo del Valle con uno de Santander:
 
 Cinco parejas cumplen, así que la lista no queda vacía y `cercanas` devuelve
 `true`. Las diferencias son aproximadas: con `Double`, la resta `5.1 - 4.2` da
-`0.8999999999999995` y no exactamente `0.9`.
+`0.8999999999999995` y no exactamente `0.9`. Con `dif = 1.0` el resultado es el
+mismo con y sin tolerancia, porque ninguna diferencia cae en el intervalo
+$(1.0,\ 1.0 + 10^{-9}]$.
 
 Resultado: `List(("Valle", "Santander"), ("Valle", "Choco"), ("Santander", "Choco"))`.
 
@@ -299,4 +312,314 @@ flowchart LR
     V --> X["magnitudMaxima: 5.3, 5.1, 6.0"]
     S --> X
     C --> X
+```
+
+## Punto 3 — consultas seguras
+
+Este punto consulta los mapas construidos en el Punto 2 sin riesgo de lanzar
+`NoSuchElementException` ante claves ausentes.
+
+### 3.1 `conteoSeguro`
+
+```scala
+def conteoSeguro(r: Registro): Map[String, Int] =
+  conteoPorRegion(r).withDefaultValue(0)
+```
+
+**Cómo se ejecuta.** `withDefaultValue` envuelve el mapa con un valor por
+defecto: al aplicarlo como función a una llave ausente (`map(key)`), en lugar de
+lanzar la excepción devuelve el valor de respaldo `0`. El mapa resultante se
+comporta como una **función total**:
+
+$$
+\text{conteoSeguro}(r)(reg) =
+\begin{cases}
+\text{conteoPorRegion}(r)(reg) & \text{si } reg \in \text{llaves del mapa} \\
+0 & \text{en otro caso}
+\end{cases}
+$$
+
+**Traza:**
+- `conteoSeguro(registro)("Amazonas")`: `"Amazonas"` no está en las llaves `{"Valle", "Santander", "Choco"}`; devuelve `0`.
+- `conteoSeguro(registro)("Valle")`: `"Valle"` sí está; devuelve su conteo `3`.
+- `conteoSeguro(List())("Valle")`: Sobre el registro vacío, no hay llaves; devuelve `0`.
+
+### 3.2 `maximaDe`
+
+```scala
+def maximaDe(r: Registro, region: String): Option[Double] =
+  magnitudMaxima(r).get(region)
+```
+
+**Cómo se ejecuta.** En el Punto 2 ya se calculó `magnitudMaxima(r)` como un
+`Map[String, Double]`. Para realizar la consulta segura de dicho mapa, se invoca
+el método `.get(region)`, el cual devuelve `Some(maxima)` si la llave está
+presente en el mapa y `None` si está ausente o si el registro era vacío. No se
+produce ninguna excepción.
+
+**Traza:**
+- `maximaDe(registro, "Choco")`: `"Choco"` tiene sismos; devuelve `Some(6.0)`.
+- `maximaDe(registro, "Amazonas")`: `"Amazonas"` no existe en el registro; devuelve `None`.
+- `maximaDe(List(), "Valle")`: El registro vacío genera un mapa vacío; devuelve `None`.
+
+### 3.3 `regionMasActiva`
+
+```scala
+def regionMasActiva(r: Registro): Option[String] =
+  conteoPorRegion(r).toList
+    .sortBy { case (region, n) => (-n, region) }
+    .headOption
+    .map(_._1)
+```
+
+**Cómo se ejecuta.** Paso a paso:
+
+1. `conteoPorRegion(r).toList` convierte el mapa en la lista de parejas
+   `(región, conteo)`, en un orden que el mapa no garantiza y que aquí no
+   importa, porque el paso siguiente ordena. Para el registro de ejemplo,
+   por ejemplo: `List(("Valle", 3), ("Santander", 2), ("Choco", 2))`.
+2. `sortBy { case (region, n) => (-n, region) }` ordena lexicográficamente por
+   la tupla: primero por conteo **descendente** (el signo menos invierte el orden
+   numérico natural) y, ante empates en el conteo, por la cadena de la `region` en
+   orden **ascendente** (el desempate alfabético estipulado en el enunciado):
+   `List(("Valle", 3), ("Choco", 2), ("Santander", 2))`.
+3. `headOption` toma el primer elemento de la lista ordenada y devuelve `None` si
+   la lista está vacía (registro vacío):
+   `Some(("Valle", 3))` para el ejemplo, `None` para el registro vacío.
+4. `map(_._1)` extrae el nombre de la región: `Some("Valle")`.
+
+**Traza del desempate alfabético:**
+Con `List(Sismo(..., "Zulia", ...), Sismo(..., "Arauca", ...))`:
+- El conteo es `Map("Zulia" -> 1, "Arauca" -> 1)`.
+- `sortBy` evalúa las tuplas `(-1, "Arauca")` y `(-1, "Zulia")`. Como `-1 == -1`,
+  desempata alfabéticamente: `"Arauca" < "Zulia"`.
+- `headOption.map(_._1)` produce `Some("Arauca")`: la primera en orden alfabético,
+  independiente del orden en que aparecieron en el registro.
+
+```mermaid
+flowchart LR
+    R["conteoPorRegion(r)"] --> L["toList: por ejemplo [(Valle,3), (Santander,2), (Choco,2)]"]
+    L --> S["sortBy (-n, region): [(Valle,3), (Choco,2), (Santander,2)]"]
+    S --> H["headOption: Some((Valle, 3))"]
+    H --> M["map(_._1): Some('Valle')"]
+```
+
+## Punto 4 — réplicas perezosas
+
+### 4.1 `replicas`: una secuencia infinita
+
+```scala
+def redondear(x: Double): Double = Math.round(x * 100.0) / 100.0
+
+def replicas(magnitud: Double): LazyList[Double] = {
+  def desde(actual: Double): LazyList[Double] =
+    redondear(actual) #:: desde(actual * 0.8)
+
+  desde(magnitud)
+}
+```
+
+**Cómo se ejecuta.** `replicas` solo llama a la auxiliar interna `desde` con la
+magnitud inicial. `desde(actual)` construye con `#::` una `LazyList` cuya
+**cabeza** es `redondear(actual)`, evaluada de inmediato, y cuya **cola** es la
+expresión por nombre `desde(actual * 0.8)`: no se evalúa al invocar la función,
+sino únicamente cuando un consumidor solicita la cola.
+
+El redondeo se aplica **solo al emitir**: el valor interno `actual` se multiplica
+por 0.8 sin redondear, y lo que sale de la lista es su redondeo. Si se redondeara
+también el valor interno, el error se acumularía (con 3.0 la posición 7 daría
+0.78 en lugar de 0.79) y, con mínimo 0, la secuencia se estancaría en 0.01 y
+nunca terminaría. Con $a_1 = \mu$ y $a_{k+1} = 0.8 \cdot a_k$ (producto en
+`Double`), la secuencia emitida es:
+
+$$
+m_k = \rho(a_k), \qquad \rho(x) = \frac{\text{round}(100\,x)}{100}
+$$
+
+**Por qué no agota la memoria aunque sea infinita.**
+La función no ejecuta un ciclo infinito ni reserva memoria para toda la
+secuencia: retorna de inmediato, en tiempo $O(1)$, una celda que contiene el
+primer valor y una clausura (receta de cómputo) para la cola. Solo se
+materializan y almacenan los nodos que un consumidor ha pedido explícitamente
+(por ejemplo con `take(n)`), y quedan memorizados (*memoized*) para no
+recalcularlos. La llamada `replicas(5.0).take(4)` retorna cuatro elementos sin
+bloquearse jamás.
+
+**Traza de `replicas(5.0).take(4).toList`.** Los valores internos son
+$a_1 = 5.0$, $a_2 = 4.0$, $a_3 = 3.2$, $a_4 = 2.5600000000000005$ y
+$a_5 = 2.0480000000000005$:
+
+| paso | consumidor solicita | cabeza evaluada | cola suspendida (receta) |
+|:---:|---|:---:|---|
+| 0 | `replicas(5.0)` | $\rho(a_1) = 5.0$ | `desde(a_1 * 0.8)`, con $a_2 = 4.0$ |
+| 1 | cola de paso 0 | $\rho(a_2) = 4.0$ | `desde(a_2 * 0.8)`, con $a_3 = 3.2$ |
+| 2 | cola de paso 1 | $\rho(a_3) = 3.2$ | `desde(a_3 * 0.8)`, con $a_4 = 2.5600000000000005$ |
+| 3 | cola de paso 2 | $\rho(a_4) = 2.56$ | `desde(a_4 * 0.8)`, con $a_5 = 2.0480000000000005$ |
+| — | `take(4)` completó 4 elementos | se detiene | nunca se evalúa `desde(a_4 * 0.8)` |
+
+Resultado: `List(5.0, 4.0, 3.2, 2.56)`. En memoria únicamente se construyeron
+cuatro celdas; la cola del paso 3 quedó suspendida sin evaluar. Si se evaluara,
+su cabeza sería $\rho(a_5) = 2.05$.
+
+```mermaid
+sequenceDiagram
+    participant T as take(4)
+    participant L0 as desde(5.0)
+    participant L1 as desde(4.0)
+    participant L2 as desde(3.2)
+    participant L3 as desde(2.56)
+    T->>L0: pide la cabeza
+    L0-->>T: 5.0 (calcula redondear(5.0))
+    T->>L0: pide la cola
+    L0->>L1: evalúa la receta
+    L1-->>T: 4.0
+    T->>L1: pide la cola
+    L1->>L2: evalúa la receta
+    L2-->>T: 3.2
+    T->>L2: pide la cola
+    L2->>L3: evalúa la receta
+    L3-->>T: 2.56
+    T-->>T: ya tiene 4: se detiene sin pedir la cola de L3
+```
+
+### 4.2 `replicasSensibles`: truncamiento bajo demanda
+
+```scala
+def replicasSensibles(magnitud: Double, minimo: Double): List[Double] =
+  replicas(magnitud).takeWhile(_ > minimo).toList
+```
+
+**Cómo se ejecuta.** El método `takeWhile` sobre una `LazyList` opera de forma
+perezosa: evalúa los elementos de uno en uno y se detiene en el **primer**
+elemento que no cumpla la condición estricta `_ > minimo`. En cuanto halla un
+elemento menor o igual al mínimo, no pide más elementos de la cola infinita.
+Finalmente, `toList` convierte únicamente los elementos aceptados en una lista
+ansiosa.
+
+**Traza de `replicasSensibles(5.0, 3.0)`:**
+
+| elemento | cálculo | valor | ¿supera 3.0? | decisión de `takeWhile` |
+|:---:|:---:|:---:|:---:|---|
+| 1 | $\rho(a_1)$ con $a_1 = 5.0$ | $5.0$ | sí ($5.0 > 3.0$) | se acepta y se pide siguiente |
+| 2 | $\rho(a_2)$ con $a_2 = 5.0 \times 0.8$ | $4.0$ | sí ($4.0 > 3.0$) | se acepta y se pide siguiente |
+| 3 | $\rho(a_3)$ con $a_3 = 4.0 \times 0.8$ | $3.2$ | sí ($3.2 > 3.0$) | se acepta y se pide siguiente |
+| 4 | $\rho(a_4)$ con $a_4 = 3.2 \times 0.8$ | $2.56$ | no ($2.56 \not> 3.0$) | **`takeWhile` se detiene** |
+
+Resultado: `List(5.0, 4.0, 3.2)`.
+El cuarto elemento ($2.56$) se tuvo que evaluar para verificar el predicado, pero
+al no cumplirlo, la evaluación se corta inmediatamente y ningún elemento
+posterior (como $2.05$) llega a ser computado.
+
+**Garantía de terminación.**
+Con $a_{k+1} = 0.8 \cdot a_k$ y $\mu \ge 0$, los $a_k$ son no negativos y
+decrecen hacia 0. Cuando $a_K < 0.005$, el redondeo da $\rho(a_K) = 0$. Como el
+redondeo no se acumula, esto ocurre para todo $\mu \ge 0$ y, por tanto, la
+emisión llega a 0 en un número finito de pasos. Para cualquier mínimo
+$c \ge 0$, la secuencia emitida alcanza un valor $\le c$ y `takeWhile` se
+detiene (el detalle está en el Lema 5 del informe de corrección). Si
+$\mu < 0$, la primera réplica ya es $\le 0 \le c$ y el resultado es la lista
+vacía.
+
+## Punto 5: informe combinado
+
+```scala
+def informe(r: Registro, minimo: Double): Map[String, Resumen] = {
+  val maximas = magnitudMaxima(r)
+
+  conteoPorRegion(r).map { case (region, n) =>
+    val maxima = maximas(region)
+    (region, Resumen(n, maxima, replicasSensibles(maxima, minimo).length))
+  }
+}
+```
+
+Este punto no usa `for`: combina las funciones de los Puntos 2 y 4. De
+`conteoPorRegion` toma las regiones y su número de sismos; de `magnitudMaxima`,
+la mayor magnitud de cada región; y de `replicasSensibles`, cuántas réplicas
+supera el mínimo el sismo más fuerte de esa región. Con esos tres datos arma un
+`Resumen` por región.
+
+### Cómo se ejecuta
+
+1. `val maximas = magnitudMaxima(r)` se calcula **una sola vez**, antes de
+   recorrer nada, y se reutiliza para todas las regiones.
+2. `conteoPorRegion(r)` da el mapa `región -> número de sismos`. El `map` con
+   `case (region, n)` recorre sus entradas y reemplaza cada una por
+   `(region, Resumen(...))`; las llaves se conservan.
+3. Para cada entrada se busca la máxima con `maximas(region)`. Es una consulta
+   directa y no lanza excepción, porque `conteoPorRegion` y `magnitudMaxima`
+   tienen las mismas llaves: ambas salen de `porRegion`.
+4. `replicasSensibles(maxima, minimo)` genera las réplicas del sismo más fuerte
+   mientras superen estrictamente el mínimo, y `.length` cuenta cuántas son. La
+   primera de la secuencia es la magnitud del propio sismo, así que se cuenta
+   si supera el mínimo.
+5. Con `n`, `maxima` y ese conteo se construye
+   `Resumen(n, maxima, réplicas)`.
+
+### Ejecución de `informe(registro, 3.0)`
+
+Los datos que llegan de los Puntos 2 y 4:
+
+| Región | `conteoPorRegion` | `magnitudMaxima` | Réplicas de la máxima que superan 3.0 | `.length` |
+|--------|:-----------------:|:----------------:|----------------------------------------|:---------:|
+| Valle     | 3 | 5.3 | `5.3, 4.24, 3.39` (la siguiente, 2.71, no supera 3.0) | 3 |
+| Santander | 2 | 5.1 | `5.1, 4.08, 3.26` (la siguiente, 2.61, no supera 3.0) | 3 |
+| Choco     | 2 | 6.0 | `6.0, 4.8, 3.84, 3.07` (la siguiente, 2.46, no supera 3.0) | 4 |
+
+Cada fila se convierte en una entrada del resultado:
+
+| Entrada de `conteoPorRegion` | `maximas(region)` | Entrada resultante |
+|------------------------------|:-----------------:|--------------------|
+| `Valle -> 3`     | 5.3 | `Valle -> Resumen(3, 5.3, 3)` |
+| `Santander -> 2` | 5.1 | `Santander -> Resumen(2, 5.1, 3)` |
+| `Choco -> 2`     | 6.0 | `Choco -> Resumen(2, 6.0, 4)` |
+
+Resultado:
+
+```scala
+Map("Valle"     -> Resumen(3, 5.3, 3),
+    "Santander" -> Resumen(2, 5.1, 3),
+    "Choco"     -> Resumen(2, 6.0, 4))
+```
+
+### Ejecución de `informe(registro, 5.0)`
+
+Con un mínimo más alto, las réplicas se cortan antes. Para el Valle, la
+secuencia es `5.3, 4.24, ...`: solo `5.3` supera 5.0, y `takeWhile` se detiene
+en `4.24`. Lo mismo pasa en Santander (`5.1` y luego `4.08`) y en Choco (`6.0`
+y luego `4.8`). El resultado es
+
+```scala
+Map("Valle"     -> Resumen(3, 5.3, 1),
+    "Santander" -> Resumen(2, 5.1, 1),
+    "Choco"     -> Resumen(2, 6.0, 1))
+```
+
+Los dos primeros campos no cambian, porque no dependen del mínimo. Solo cambia
+el último.
+
+### Casos límite
+
+* **Registro vacío:** `conteoPorRegion(List())` es `Map()`, así que el `map` no
+  recorre ninguna entrada y el resultado es `Map()`.
+* **Región cuya máxima no supera el mínimo:** `takeWhile` se detiene en el
+  primer elemento, `replicasSensibles` devuelve `List()` y el último campo es
+  `0`. Por ejemplo, Huila con un solo sismo de 2.9 y mínimo 3.0 da
+  `Resumen(1, 2.9, 0)`.
+* **Mínimo cero:** la secuencia termina de todos modos, porque el valor interno
+  sin redondear tiende a 0 y el redondeo a dos decimales eventualmente emite
+  `0.0`, que no supera 0. Con la máxima 5.3 salen 32 réplicas, la última de
+  `0.01`.
+
+### Diagrama
+
+```mermaid
+flowchart TB
+    R["registro: 7 sismos"] --> C["conteoPorRegion: Valle 3, Santander 2, Choco 2"]
+    R --> X["magnitudMaxima: Valle 5.3, Santander 5.1, Choco 6.0"]
+    X --> RS["replicasSensibles de cada maxima con minimo 3.0: 3, 3, 4"]
+    C --> M["map sobre las entradas de conteoPorRegion"]
+    X --> M
+    RS --> M
+    M --> OUT["Valle Resumen 3, 5.3, 3 | Santander Resumen 2, 5.1, 3 | Choco Resumen 2, 6.0, 4"]
 ```
